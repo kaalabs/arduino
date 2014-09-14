@@ -17,8 +17,10 @@
 //#define FREQUENCY     RF69_868MHZ
 //#define FREQUENCY     RF69_915MHZ
 #define ENCRYPTKEY    "df39ea10cc412@1k" //exactly the same 16 characters/bytes on all nodes!
-//#define IS_RFM69HW    //uncomment only for RFM69HW! Leave out if you have RFM69W!
+#define IS_RFM69HW    0 //set to 1 only for RFM69HW! Leave 0 if you have RFM69(C)W!
+#define RFM69_MAXDATA 61
 #define ACK_TIME      30 // max # of ms to wait for an ack
+#define LED_PIN     9       // activity LED, comment out to disable
 
 #define SERIAL_EN             //comment this out when deploying to an installed SM to save a few KB of sketch size
 #define SERIAL_BAUD    57600
@@ -30,17 +32,14 @@
   #define DEBUGln(input);
 #endif
 
-#ifdef __AVR_ATmega1284P__
-  #define LED           15 // Moteino MEGAs have LEDs on D15
-  #define FLASH_SS      23 // and FLASH SS on D23
-#else
-  #define LED           9 // Moteinos have LEDs on D9
-  #define FLASH_SS      8 // and FLASH SS on D8
-#endif
+#define LED           9 // Moteinos have LEDs on D9
 
 RFM69 radio;
 
 bool promiscuousMode = true; //set to 'true' to sniff all packets on the same network
+static char cmd;
+static word value;
+static byte stack[RFM69_MAXDATA+4], top, sendLen, dest; //TODO: RF12_MAXDATA convert to RFM69
 
 struct configuration {
   byte frequency;
@@ -53,6 +52,105 @@ struct configuration {
   byte separator2;
 } CONFIG;
 
+static void showWord (unsigned int value) {
+        Serial.print((word) value);    
+}
+
+static void printOneChar (char c) {
+    Serial.print(c);
+}
+
+static void activityLed (byte on) {    //TODO: convert from jeeLib Port
+#ifdef LED_PIN
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, !on);
+#endif
+}
+
+static void showByte (byte value) {
+   Serial.print((word) value); // Serial.print causes issues with my terminal emulator (PuTTY)
+                               // showByte(0x0A) produced a LF etc rather than 10
+}
+
+static void showString (PGM_P s) {
+    for (;;) {
+        char c = pgm_read_byte(s++);
+        if (c == 0)
+            break;
+        if (c == '\n')
+            printOneChar('\r');
+        printOneChar(c);
+    }
+}
+
+static void configDump() {
+  DEBUG("\r\nNODEID:");DEBUGln(CONFIG.nodeID);
+  DEBUG("NETWORKID:");DEBUGln(CONFIG.networkID);
+  DEBUG("EncryptKey:");DEBUGln(CONFIG.encryptionKey);
+  DEBUG("isHW:");DEBUGln(CONFIG.isHW);  
+}
+
+const char helpText1[] PROGMEM =
+    "\n"
+    "Available commands:\n"
+    " <nn>i      - set node ID (standard node ids are 1..30)\n"
+    " <n>b       - set MHz band (4 = 433, 8 = 868, 9 = 915)\n"
+    " <nnn>g     - set network group (RFM12 only allows 212, 0 = any)\n"
+    " ...,<nn>a  - send data packet to node <nn>, request ack with retry\n"
+    " ...,<nn>s  - send data packet to node <nn>, no ack\n"
+    " ... <nn>   - Space character is a valid delimiter\n"
+
+;
+
+static void showHelp () {
+    showString(helpText1);
+    showString(PSTR("Current configuration:\n"));
+    configDump();
+}
+static void handleInput (char c) {
+    //      Variable value is now 16 bits to permit offset command, stack only stores 8 bits
+    //      not a problem for offset command but beware.
+    if ('0' <= c && c <= '9') {
+        value = 10 * value + c - '0';
+        return;
+    }
+    if (c == ',' || c == ' ') {   // Permit comma or space as delimiters
+        if (top < sizeof stack)
+            stack[top++] = value; // truncated to 8 bits
+        value = 0;
+        return;
+    }
+    if (32 > c || c > 'z') {      // Trap unknown characters
+            showString(PSTR("Key="));
+            showByte(c);          // Highlight Tiny serial framing errors.  
+            Serial.println();
+            value = top = 0;      // Clear up
+    }
+    if ('a' <= c && c <= 'z') {
+        showString(PSTR("> "));
+        for (byte i = 0; i < top; ++i) {
+            showByte(stack[i]);
+            printOneChar(',');
+        }
+        showWord(value);
+        Serial.println(c);
+    }
+    if (c > ' ') {  
+        switch (c) {
+          case 'a': // send packet to node ID N, request an ack
+          case 's': // send packet to node ID N, no ack
+            cmd = c;
+            sendLen = top;
+            dest = value;
+            break;
+          default:
+            showHelp();
+        } // End case group
+        
+    }
+    value = top = 0;
+}
+
 void setup() {
   #ifdef SERIAL_EN
     Serial.begin(SERIAL_BAUD);
@@ -62,10 +160,13 @@ void setup() {
   {
     Serial.println("No valid config found in EEPROM, writing defaults");
     CONFIG.separator1=CONFIG.separator2=0;
-    CONFIG.frequency=RF69_868MHZ;
+    CONFIG.frequency=FREQUENCY;
     CONFIG.description[0]=0;
-    CONFIG.encryptionKey[0]=0;
-    CONFIG.isHW=CONFIG.nodeID=CONFIG.networkID=0;
+    strcpy(CONFIG.encryptionKey, ENCRYPTKEY);
+    CONFIG.isHW=IS_RFM69HW;
+    CONFIG.nodeID=NODEID;
+    CONFIG.networkID=NETWORKID;
+    EEPROM.writeBlock(0, CONFIG);
   }
   
   radio.initialize(CONFIG.frequency,CONFIG.nodeID,CONFIG.networkID);
@@ -73,43 +174,25 @@ void setup() {
   //radio.setPowerLevel(10);
   if (CONFIG.isHW) radio.setHighPower(); //use with RFM69HW ONLY!
   if (CONFIG.encryptionKey[0]!=0) radio.encrypt(CONFIG.encryptionKey);
-
-  DEBUG("\r\nNODEID:");DEBUGln(CONFIG.nodeID);
-  DEBUG("NETWORKID:");DEBUGln(CONFIG.networkID);
-  DEBUG("EncryptKey:");DEBUGln(CONFIG.encryptionKey);
-  DEBUG("isHW:");DEBUGln(CONFIG.isHW);
+  
+  radio.writeReg( 0x03, 0x06); //19.2kBps
+  radio.writeReg( 0x04, 0x83);
+  radio.writeReg( 0x05, 0x01); //default:5khz, (FDEV + BitRate/2 <= 500Khz)
+  radio.writeReg( 0x06, 0x9A);
+  radio.writeReg( 0x19, 0x40 | 0x10 | 0x03); 
+  radio.writeReg( 0x3d, 0xC0 | 0x02 | 0x00); //RXRESTARTDELAY must match transmitter PA ramp-down time (bitrate dependent)
+  configDump();
+  radio.promiscuous(promiscuousMode);
 }
 
 byte ackCount=0;
+
 void loop() {
-  //process any serial input
-  if (Serial.available() > 0)
-  {
-    char input = Serial.read();
-    if (input == 'r') //d=dump all register values
-      radio.readAllRegs();
-    if (input == 'E') //E=enable encryption
-      radio.encrypt(ENCRYPTKEY);
-    if (input == 'e') //e=disable encryption
-      radio.encrypt(null);
-    if (input == 'p')
-    {
-      promiscuousMode = !promiscuousMode;
-      radio.promiscuous(promiscuousMode);
-      Serial.print("Promiscuous mode ");Serial.println(promiscuousMode ? "on" : "off");
-    }
-    
-    if (input == 't')
-    {
-      byte temperature =  radio.readTemperature(-1); // -1 = user cal factor, adjust for correct ambient
-      byte fTemp = 1.8 * temperature + 32; // 9/5=1.8
-      Serial.print( "Radio Temp is ");
-      Serial.print(temperature);
-      Serial.print("C, ");
-      Serial.print(fTemp); //converting to F loses some resolution, obvious when C is on edge between 2 values (ie 26C=78F, 27C=80F)
-      Serial.println('F');
-    }
-  }
+   
+if (Serial.available())
+        handleInput(Serial.read());
+
+
 
   if (radio.receiveDone())
   {
@@ -121,32 +204,51 @@ void loop() {
     for (byte i = 0; i < radio.DATALEN; i++){
       Serial.print((byte)radio.DATA[i]);Serial.print(" ");
     }
-    Serial.print("[RX_RSSI:");Serial.print(radio.RSSI);Serial.print("]");
+    Serial.print("(");Serial.print(radio.RSSI);Serial.print(")");
     
     if (radio.ACKRequested())
     {
       byte theNodeID = radio.SENDERID;
       Serial.print("\n\r <- ACK_REQ ");Serial.print(theNodeID);
-      Serial.print("\n\r -> ACK ");Serial.print(theNodeID);
       radio.sendACK();
+      Serial.print("\n\r -> ACK ");Serial.print(theNodeID);
       // When a node requests an ACK, respond to the ACK
-      // and also send a packet requesting an ACK (every 3rd one only)
-      // This way both TX/RX NODE functions are tested on 1 end at the GATEWAY
-      if (ackCount++%3==0)
-      {
-        Serial.print("\n\r -> ACK_REQ ");Serial.print(theNodeID);
-        delay(3); //need this when sending right after reception .. ?
-        if (radio.sendWithRetry(theNodeID, "ACK TEST", 8, ACK_TIME)){  // 0 = only 1 attempt, no retries
-          Serial.print("\n\r <- ACK ");Serial.print(theNodeID);
-        }
-        else {
-          Serial.print("\n\r =ACK_TIMEOUT ");Serial.print(theNodeID);
-        }
-      }
     }
     Serial.println();
     Blink(LED,3);
   }
+  if (cmd) {
+        if (radio.canSend()) {
+            activityLed(1);
+
+            showString(PSTR(" -> "));
+            showByte(sendLen);
+            showString(PSTR(" b\n"));
+            byte header = cmd == 'a' ? 1 : 0;
+            if (header == 0) {
+              if (dest) {
+                 //showString(PSTR(" send with DEST\n"));
+                 radio.send(dest, stack, sendLen);
+              } else {
+                         //showString(PSTR(" send broadcast\n"));
+                         radio.send(255, stack, sendLen);
+                      }
+            } else {
+                      if (dest) {
+                                //   showString(PSTR("send with DEST and ACK\n"));
+                                   radio.sendWithRetry(dest, stack, sendLen);
+                      } else {
+                         // showString(PSTR("send broadcast with ACK\n"));
+                         radio.sendWithRetry(255, stack, sendLen);
+                        }
+              }
+            cmd = 0;
+            activityLed(0);
+        } else {
+            showString(PSTR(" Busy\n"));  // Not ready to send
+            cmd = 0;                     // Request dropped
+          }
+  }    
 }
 
 void Blink(byte PIN, int DELAY_MS)

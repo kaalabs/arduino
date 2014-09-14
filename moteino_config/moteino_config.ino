@@ -23,7 +23,8 @@
 //For ASCII table see: http://www.asciitable.com/
 
 #include <EEPROMex.h>      //get it here: http://playground.arduino.cc/Code/EEPROMex
-#include <RFM69.h>         //get it here: http://github.com/lowpowerlab/rfm69
+#include <RFM69.h>     //get it here: http://github.com/lowpowerlab/rfm69
+#include <SPI.h>
 #include <SPIFlash.h>      //get it here: http://github.com/lowpowerlab/spiflash
 #include <avr/wdt.h>       //comes with Arduino
 
@@ -32,6 +33,31 @@
 #define SYNC_EEPROM_ADDR   64  //SYNC_TO and SYNC_INFO data starts at this EEPROM address
 byte SYNC_TO[SYNC_MAX_COUNT];  // stores the address of the remote SM(s) that this SM has to notify/send request to
 int SYNC_INFO[SYNC_MAX_COUNT]; // stores the buttons and modes of this and the remote SM as last 4 digits:
+
+#define NODEID        1    //unique for each node on same network
+#define GATEWAYID     1  //assumed 1 in general
+#define NETWORKID     100  //the same on all nodes that talk to each other
+//Match frequency to the hardware version of the radio on your Moteino (uncomment one):
+#define FREQUENCY     RF69_868MHZ
+//#define FREQUENCY     RF69_868MHZ
+//#define FREQUENCY     RF69_915MHZ
+#define ENCRYPTKEY    "df39ea10cc412@1k" //exactly the same 16 characters/bytes on all nodes!
+#define IS_RFM69HW    0 //set to 1 only for RFM69HW! Leave 0 if you have RFM69(C)W!
+
+#define ACK_TIME      30 // max # of ms to wait for an ack
+#define LED_PIN     9       // activity LED, comment out to disable
+
+#define SERIAL_EN             //comment this out when deploying to an installed SM to save a few KB of sketch size
+#define SERIAL_BAUD    57600
+#ifdef SERIAL_EN
+  #define DEBUG(input)   {Serial.print(input); delay(1);}
+  #define DEBUGln(input) {Serial.println(input); delay(1);}
+#else
+  #define DEBUG(input);
+  #define DEBUGln(input);
+#endif
+
+#define LED           9 // Moteinos have LEDs on D9
 
 struct configuration {
   byte frequency;
@@ -46,7 +72,7 @@ struct configuration {
 
 void setup()
 {
-  Serial.begin(115200);
+  Serial.begin(57600);
   EEPROM.readBlock(0, CONFIG);
   if (CONFIG.frequency!=RF69_433MHZ && CONFIG.frequency!=RF69_868MHZ && CONFIG.frequency!=RF69_915MHZ) // virgin CONFIG, expected [4,8,9]
   {
