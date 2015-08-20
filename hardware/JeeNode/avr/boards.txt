@@ -1,0 +1,16 @@
+jeenodev5.name=JeeNode v5/6
+jeenodev5.upload.protocol=arduino
+jeenodev5.upload.maximum_size=32256
+jeenodev5.upload.speed=115200
+jeenodev5.bootloader.low_fuses=0xde
+jeenodev5.bootloader.high_fuses=0xde
+jeenodev5.bootloader.extended_fuses=0x05
+jeenodev5.bootloader.path=optiboot
+jeenodev5.bootloader.file=optiboot_atmega328.hex
+jeenodev5.bootloader.unlock_bits=0x3F
+jeenodev5.bootloader.lock_bits=0x0F
+jeenodev5.build.mcu=atmega328p
+jeenodev5.build.f_cpu=16000000L
+jeenodev5.build.core=arduino
+jeenodev5.build.variant=standard
+

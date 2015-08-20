@@ -132,5 +132,37 @@ void draw_temperature_time_footer_update(double temp, double mintemp, double max
 
 }
 
+void draw_temperature_time_footer_error(double temp, double mintemp, double maxtemp, double hour, double minute)
+{
+  glcd.drawLine(0, 47, 128, 47, WHITE);     //middle horizontal line 
 
+  char str[50];
+  // GLCD Temperature
+  glcd.setFont(font_helvB12);  
+  dtostrf(temp,0,1,str); 
+  strcat(str,"C");
+  glcd.drawString(0,50,str);  
+  
+  // Minimum and maximum GLCD temperature
+  glcd.setFont(font_clR4x6);             
+  itoa((int)mintemp,str,10);
+  strcat(str,"C");
+  glcd.drawString_P(46,51,PSTR("MIN"));
+  glcd.drawString(62,51,str);
+               
+  itoa((int)maxtemp,str,10); 
+  strcat(str,"C");
+  glcd.drawString_P(46,59,PSTR("MAX"));
+  glcd.drawString(62,59,str);
+  
+  // Time
+  char str2[5];
+  itoa((int)hour,str,10);
+  if  (minute<10) strcat(str,"x 0"); else strcat(str,"x ");
+  itoa((int)minute,str2,10);
+  strcat(str,str2); 
+  glcd.setFont(font_helvB12);
+  glcd.drawString(82,50,str);
+
+}
 

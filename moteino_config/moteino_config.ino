@@ -64,8 +64,10 @@ struct configuration {
   byte isHW;
   byte nodeID;
   byte networkID;
+  byte collectMode;                  //separators needed to keep strings from overlapping 
+  byte promiscuousMode;              //separators needed to keep strings from overlapping
   char encryptionKey[16];
-  byte separator1;          //separators needed to keep strings from overlapping
+  byte separator1;
   char description[10];
   byte separator2;
 } CONFIG;
@@ -77,11 +79,15 @@ void setup()
   if (CONFIG.frequency!=RF69_433MHZ && CONFIG.frequency!=RF69_868MHZ && CONFIG.frequency!=RF69_915MHZ) // virgin CONFIG, expected [4,8,9]
   {
     Serial.println("No valid config found in EEPROM, writing defaults");
-    CONFIG.separator1=CONFIG.separator2=0;
-    CONFIG.frequency=RF69_915MHZ;
-    CONFIG.description[0]=0;
-    CONFIG.encryptionKey[0]=0;
-    CONFIG.isHW=CONFIG.nodeID=CONFIG.networkID=0;
+      CONFIG.separator2=CONFIG.separator1=0;
+      CONFIG.collectMode=0;
+      CONFIG.promiscuousMode=0;
+      CONFIG.frequency=FREQUENCY;
+      CONFIG.description[0]=0;
+      strcpy(CONFIG.encryptionKey, ENCRYPTKEY);
+      CONFIG.isHW=IS_RFM69HW;
+      CONFIG.nodeID=NODEID;
+      CONFIG.networkID=NETWORKID;
   }
   
   EEPROM.readBlock<byte>(SYNC_EEPROM_ADDR, SYNC_TO, SYNC_MAX_COUNT);
@@ -94,7 +100,7 @@ void displayMainMenu()
 {
   Serial.println();
   Serial.println("-----------------------------------------------");
-  Serial.println("   Moteino-RFM69 configuration setup utility");
+  Serial.println("   kaaNet-RFM69 configuration setup utility");
   Serial.println("-----------------------------------------------");
   Serial.print(" f - set frequency (current: ");Serial.print(CONFIG.frequency==RF69_433MHZ?"433":CONFIG.frequency==RF69_868MHZ?"868":"915");Serial.println("mhz)");
   Serial.print(" i - set node ID (current: ");Serial.print(CONFIG.nodeID);Serial.println(")");

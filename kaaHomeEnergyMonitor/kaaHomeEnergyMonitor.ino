@@ -34,9 +34,10 @@
 //	- templates.ino
 //
 //-------------------------------------------------------------------------------------------------------------------------------------------------
-#define RF69_COMPAT 1
+#define RF69_COMPAT 0
 #define MAX_TIME_TO_RECEIVE 600 // number of seconds to wait for first reception of time and usage data after reset takes place
 
+#include <avr/eeprom.h>
 #include <avr/wdt.h>
 #include <JeeLib.h>
 #include <GLCD_ST7565.h>
@@ -50,14 +51,24 @@ GLCD_ST7565 glcd;
 #include <Wire.h>                   // Part of Arduino libraries - needed for RTClib
 RTC_Millis RTC;
 
-//--------------------------------------------------------------------------------------------
-// RFM12B Settings
-//--------------------------------------------------------------------------------------------
-#define MYNODE 3            // #20/5: Slaapkamer ouders #2/10: Slaapkamer Stijn  3/10 Slaapkamer Anouk
-#define RF_freq RF12_868MHZ     // frequency - match to same frequency as RFM12B module (change to 868Mhz or 915Mhz if appropriate)
-#define group 10
+// RF12 configuration area
+typedef struct {
+    byte nodeId;            // used by rf12_config, offset 0
+    byte group;             // used by rf12_config, offset 1
+    byte format;            // used by rf12_config, offset 2
+    byte output :2;         // 0 = dec, 1 = hex, 2 = dec+ascii, 3 = hex+ascii
+    byte collect_mode :1;   // 0 = ack, 1 = don't send acks
+    byte quiet_mode   :1;   // 0 = show all, 1 = show only valid packets
+    byte spare_flags  :4;
+    word frequency_offset;  // used by rf12_config, offset 4
+    byte pad[RF12_EEPROM_SIZE-8];
+    word crc;
+} RF12Config;
+
+static RF12Config config;
 
 #define ONE_WIRE_BUS 5              // temperature sensor connection - hard wired 
+#define DEBUG 0
 
 unsigned long fast_update, slow_update;
 long int last_time_update;
@@ -92,13 +103,25 @@ int cval_use;
 unsigned long last_emontx;                   // Used to count time from last emontx update
 unsigned long last_emonbase;                   // Used to count time from last emontx update
 
+static void loadConfig () {
+    // eeprom_read_block(&config, RF12_EEPROM_ADDR, sizeof config);
+    // this uses 166 bytes less flash than eeprom_read_block(), no idea why
+    for (byte i = 0; i < sizeof config; ++i)
+        ((byte*) &config)[i] = eeprom_read_byte(RF12_EEPROM_ADDR + i);
+}
+
 //--------------------------------------------------------------------------------------------
 // Setup
 //--------------------------------------------------------------------------------------------
 void setup()
 {
-  delay(500); 				   //wait for power to settle before firing up the RF
-  rf12_initialize(MYNODE, RF_freq,group);
+  delay(500); 				   //wait for power to settle before firing up the RF//
+//  rf12_initialize(MYNODE, RF_freq,group);
+if (rf12_configSilent()) {
+        loadConfig();
+  } else {
+      while (1);
+  }
   delay(100);				   //wait for RF to settle befor turning on display
   glcd.begin(0x18);
   glcd.backLight(200);
@@ -109,9 +132,11 @@ void setup()
   mintemp = temp; maxtemp = temp;          // reset min and max
 
   pinMode(greenLED, OUTPUT); 
-  pinMode(redLED, OUTPUT); 
+  pinMode(redLED, OUTPUT);
+ #if DEBUG 
   Serial.begin(57600);
     Serial.println("[kaaHomeEnergyMonitor.2]");
+ #endif
   wdt_reset ();
  // wdt_enable (WDTO_8S);
 // debug_timer = millis();
@@ -204,10 +229,12 @@ void loop()
     emonglcd.temperature = (int) (temp * 100);                          // set emonglcd payload
     int LDR = analogRead(LDRpin);                     // Read the LDR Value so we can work out the light level in the room.
     int LDRbacklight = map(LDR, 0, 1023, 50, 250);    // Map the data from the LDR from 0-1023 (Max seen 1000) to var GLCDbrightness min/max
+    
     emonglcd.lightlevel = LDRbacklight;
+#if DEBUG
     Serial.println(LDRbacklight,DEC);
     Serial.flush();
-    
+#endif    
     rf12_sendNow(0, &emonglcd, sizeof emonglcd);                     //send temperature data via RFM12B using new rf12_sendNow wrapper -glynhudson
     rf12_sendWait(2);    
   }

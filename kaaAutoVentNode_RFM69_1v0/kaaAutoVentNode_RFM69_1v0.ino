@@ -16,11 +16,14 @@
 //Match frequency to the hardware version of the radio on your Moteino (uncomment one):
 #define FREQUENCY     RF69_868MHZ
 #define ENCRYPTKEY    "df39ea10cc412@1k" //exactly the same 16 characters/bytes on all nodes!
-#define IS_RFM69HW    0 //set to 1 only for RFM69HW! Leave 0 if you have RFM69(C)W!
+#define IS_RFM69HW    1 //set to 1 only for RFM69HW! Leave 0 if you have RFM69(C)W!
 bool promiscuousMode = true; //set to 'true' to sniff all packets on the same network
 
+#define RELAYPIN1             6
+#define RELAYPIN2             7
+
 #define ACK_TIME      30 // max # of ms to wait for an ack
-//#define SERIAL_EN             //comment this out when deploying to an installed SM to save a few KB of sketch size
+#define SERIAL_EN             //comment this out when deploying to an installed SM to save a few KB of sketch size
 #define SERIAL_BAUD    57600
 #ifdef SERIAL_EN
   #define DEBUG(input)   {Serial.print(input); Serial.flush();delay(1);}
@@ -131,6 +134,10 @@ void setup()
   
   AC.packettype = 99;
   radio.send(GATEWAYID, &AC, sizeof AC);
+  pinMode(RELAYPIN1, OUTPUT);
+  pinMode(RELAYPIN2, OUTPUT);
+  digitalWrite(RELAYPIN1, HIGH);
+  digitalWrite(RELAYPIN2, HIGH);
 }
 
 //--------------------------------------------------------------------------------------------
@@ -166,7 +173,7 @@ void loop()
             default: break;
           }
         }
-        if (radio.DATA[0] ==
+        if (radio.DATA[0] == 99){}
       }
   }
   switch (NodeSetup.modus) {

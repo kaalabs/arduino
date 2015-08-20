@@ -35,15 +35,16 @@
   -------------------------------------------------------------------------------------------------------------
 */
 #define RF69_COMPAT 0
-boolean debug=1;                                       //Set to 1 to few debug serial output, turning debug off increases battery life
+boolean debug=0;                                       //Set to 1 to few debug serial output, turning debug off increases battery life
 
 #define RF_freq RF12_868MHZ                 // Frequency of RF12B module can be RF12_433MHZ, RF12_868MHZ or RF12_915MHZ. You should use the one matching the module you have.
 const int nodeID = 5;                               // EmonTH temperature RFM12B node ID - should be unique on network
 const int networkGroup = 5;                // EmonTH RFM12B wireless network group - needs to be same as emonBase and emonGLCD
                                                                       // DS18B20 resolution 9,10,11 or 12bit corresponding to (0.5, 0.25, 0.125, 0.0625 degrees C LSB), lower resolution means lower power
 
-const int time_between_readings= 1;                                   // in minutes
-const int TEMPERATURE_PRECISION=12;                                   // 9 (93.8ms),10 (187.5ms) ,11 (375ms) or 12 (750ms) bits equal to resplution of 0.5C, 0.25C, 0.125C and 0.0625C
+const int time_between_readings= 1;                                   // in 10-seconds increments
+const int num_readings_before_transmission = 30;                        //multiply by 'time_between_readings' * 10 to get transmission timer in seconds
+const int TEMPERATURE_PRECISION=10;                                   // 9 (93.8ms),10 (187.5ms) ,11 (375ms) or 12 (750ms) bits equal to resplution of 0.5C, 0.25C, 0.125C and 0.0625C
 #define ASYNC_DELAY 375                                               // 9bit requres 95ms, 10bit 187ms, 11bit 375ms and 12bit resolution takes 750ms
 
 // See block comment above for library info
@@ -57,8 +58,8 @@ ISR(WDT_vect) { Sleepy::watchdogEvent(); }                            // Attache
 
 #define RETRY_PERIOD    10  // how soon to retry if ACK didn't come in
 #define RETRY_LIMIT     5   // maximum number of times to retry
-#define ACK_TIME        20  // number of milliseconds to wait for an ack
-#define RADIO_SYNC_MODE 3
+#define ACK_TIME        10  // number of milliseconds to wait for an ack
+#define RADIO_SYNC_MODE 2
 
 // Hardwired emonTH pin allocations 
 const int DS18B20_PWR=5;
@@ -74,6 +75,10 @@ const int BATT_ADC=1;
 #define DHTTYPE DHT22   // DHT 22  (AM2302)
 DHT dht(DHTPIN, DHTTYPE);
 boolean DHT22_status;                                                 // create flag variable to store presence of DS18B20
+boolean transmitnow;
+boolean firstread;
+byte transmissioncounter;
+int oldhumi;
 
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
@@ -221,6 +226,9 @@ void setup() {
   // if (debug==1) delay(200);
    
   digitalWrite(LED,LOW);
+  transmitnow = false;
+  transmissioncounter = 0;
+  firstread = true;
 } // end of setup
 
 
@@ -265,6 +273,13 @@ void loop()
     delay(2000);                                             //sleep for 1.5 - 2's to allow sensor to warm up
     // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
     emonth.humidity = ((dht.readHumidity())*10);
+    if (firstread){
+      oldhumi = emonth.humidity;
+      firstread = false;
+    } else {
+      transmitnow = ((emonth.humidity - oldhumi) > 10);
+      oldhumi = emonth.humidity;
+    }
 
     float temp=(dht.readTemperature());
     if ((temp<85.0) && (temp>-40.0)) emonth.temp = (temp*10);
@@ -305,27 +320,31 @@ void loop()
   
   power_spi_enable();
   delay(100);
-  if (debug == 1){
-    Serial.println("kaaNet transmission...");
-    Serial.flush();
-    delay(2);
-  }  
-  for (byte i = 0; i < RETRY_LIMIT; ++i) {
-        rf12_sleep(RF12_WAKEUP);
-        rf12_sendNow(RF12_HDR_ACK, &emonth, sizeof emonth);
-        rf12_sendWait(RADIO_SYNC_MODE);
-        byte acked = waitForAck();
-        rf12_sleep(RF12_SLEEP);
-        if (acked) {
-            if (debug==1){
-                Serial.print(" ack ");
-                Serial.println((int) i);
-                Serial.flush();
-                delay(2);
+  if ((transmissioncounter == num_readings_before_transmission) || (transmitnow == true)) {  
+    if (debug == 1){
+      Serial.println("kaaNet transmission...");
+      Serial.flush();
+      delay(2);
+    }    
+    for (byte i = 0; i < RETRY_LIMIT; ++i) {
+          rf12_sleep(RF12_WAKEUP);
+          rf12_sendNow(RF12_HDR_ACK, &emonth, sizeof emonth);
+          rf12_sendWait(RADIO_SYNC_MODE);
+          byte acked = waitForAck();
+          rf12_sleep(RF12_SLEEP);
+          if (acked) {
+              if (debug==1){
+                  Serial.print(" ack ");
+                  Serial.println((int) i);
+                  Serial.flush();
+                  delay(2);
                 i = RETRY_LIMIT;
-            }
-        }
-        delay(RETRY_PERIOD * 100);
+              }
+          }
+          delay(RETRY_PERIOD * 100);
+    }
+    transmissioncounter = 0;
+    transmitnow = false;
   }
   if (debug == 1){
     Serial.println("Going to sleep...");
@@ -342,8 +361,9 @@ void loop()
   byte oldADCSRA=ADCSRA;
   byte oldADCSRB=ADCSRB;
   byte oldADMUX=ADMUX;   
-  Sleepy::loseSomeTime(time_between_readings*60*1000);  
+  Sleepy::loseSomeTime(time_between_readings*10*1000);  
   //Sleepy::loseSomeTime(2000);
+  transmissioncounter = transmissioncounter + 1;
   ADCSRA=oldADCSRA; // restore ADC state
   ADCSRB=oldADCSRB;
   ADMUX=oldADMUX;
